@@ -1,6 +1,6 @@
 #!/usr/bin/env python
 #
-# file: 
+# file: $NEDC_NFC/util/python/nedc_style_checker/nedc_style_checker.py
 #
 # revision history:
 #
@@ -25,6 +25,12 @@ import re
 import sys
 import tokenize
 
+# import nedc_modules
+#
+import nedc_cmdl_parser as ncp
+import nedc_debug_tools as ndt
+import nedc_file_tools as nft
+
 #------------------------------------------------------------------------------
 #
 # global variables are listed here
@@ -38,11 +44,12 @@ __FILE__ = os.path.basename(__file__)
 # define the location of the help files
 #
 HELP_FILE = \
-    "~"
+    "$NEDC_NFC/util/python/nedc_style_checker/nedc_style_checker.help"
 
 USAGE_FILE = \
-    "~"
+    "$NEDC_NFC/util/python/nedc_style_checker/nedc_style_checker.usage"
 
+DEF_PYTHON_HEADER = "python"
 # Number of blank lines between various code parts.
 BLANK_LINES_CONFIG = {
     # Top level class and function.
@@ -54,6 +61,10 @@ INDENT_SIZE = 4
 MAX_DOC_LENGTH = 80
 MAX_LINE_LENGTH = 80
 REPORT_FORMAT = '%(path)s:%(row)d:%(col)d: %(text)s'
+
+# declare a global debug object so we can use it in functions
+#
+dbgl = ndt.Dbgl()
 
 #------------------------------------------------------------------------------
 #
@@ -173,6 +184,45 @@ nedc_checks = {'physical_line': {}, 'logical_line': {}, 'tree': {}}
 #
 #------------------------------------------------------------------------------
 
+# function: is_python
+#
+# argument:
+#   fname: path to python script
+#
+# return: True if file is an python script
+#
+# this function check the beginning of the file, and decides
+# if the file is python script
+#
+def is_python(fname):
+
+    # open the file
+    #
+    fp = open(fname, nft.MODE_READ_TEXT)
+    if fp is None:
+        print("Error: %s (line: %s) %s::%s: error opening file (%s)" %
+                (__FILE__, ndt.__LINE__, ndt.__CLASS_NAME__, ndt.__NAME__,
+                fname))
+        return False
+
+    # make sure we are at the beginning of the file and read the first line
+    #
+    fp.seek(0, os.SEEK_SET)
+    header = fp.readline()
+
+    # close the file and reset the pointer
+    #
+    fp.close()
+
+    # if the beginning of the file contains the magic sequence
+    # then it is an edf file
+    #
+    if DEF_PYTHON_HEADER in header:
+        return True
+    else:
+        return False
+
+
 # function: nedc_get_parameters
 #
 # argument:
@@ -192,7 +242,6 @@ def nedc_get_parameters(function):
 #
 # argument:
 #   check: the added condition function
-#   codes: 
 #
 # return: list of arguments in a function
 #
@@ -293,10 +342,10 @@ def trailing_blank_lines(physical_line, lines, line_number, total_lines):
     """
     if line_number == total_lines:
         stripped_last_line = physical_line.rstrip('\r\n')
-        if stripped_last_line != "# end of file":
-            return 0, "missing '# end of file' at end of file"
+        if physical_line != "# end of file" and not stripped_last_line:
+            return 0, "     missing '# end of file' at end of file"
         if stripped_last_line == physical_line:
-            return len(lines[-1]), "no newline at end of file"
+            return len(lines[-1]), "     no newline at end of file"
 
 @nedc_register_check
 def maximum_line_length(physical_line, max_line_length, multiline,
@@ -376,11 +425,11 @@ def blank_lines(logical_line, blank_lines, indent_level, line_number,
         return  # Don't expect blank lines before the first line
     if previous_logical.startswith('@'):
         if blank_lines:
-            yield 0, "E304 blank lines found after function decorator"
+            yield 0, "blank lines found after function decorator"
     elif (blank_lines > top_level_lines or
             (indent_level and blank_lines == method_lines + 1)
           ):
-        yield 0, "E303 too many blank lines (%d)" % blank_lines
+        yield 0, "too many blank lines (%d)" % blank_lines
     elif STARTSWITH_TOP_LEVEL_REGEX.match(logical_line):
         if indent_level:
             if not (blank_before == method_lines or
@@ -398,22 +447,15 @@ def blank_lines(logical_line, blank_lines, indent_level, line_number,
                         if nested or ancestor_level == 0:
                             break
                 if nested:
-                    yield 0, "E306 expected %s blank line before a " \
-                        "nested definition, found 0" % (method_lines,)
+                    yield 0, "expected %s blank line before a " \
+                        "nested definition, found 0" % (method_lines)
                 else:
-                    yield 0, "E301 expected {} blank line, found 0".format(
+                    yield 0, "expected {} blank line, found 0".format(
                         method_lines)
         elif blank_before != top_level_lines:
-            yield 0, "E302 expected %s blank lines, found %d" % (
+            yield 0, "expected %s blank lines, found %d" % (
                 top_level_lines, blank_before)
-    elif (logical_line and
-            not indent_level and
-            blank_before != top_level_lines and
-            previous_unindented_logical_line.startswith(('def ', 'class '))
-          ):
-        yield 0, "E305 expected %s blank lines after " \
-            "class or function definition, found %d" % (
-                top_level_lines, blank_before)
+   
 
 @nedc_register_check
 def extraneous_whitespace(logical_line):
@@ -442,7 +484,7 @@ def extraneous_whitespace(logical_line):
         found = match.start()
         if text[-1].isspace():
             # assert char in '([{'
-            yield found + 1, "E201 whitespace after '%s'" % char
+            yield found + 1, "whitespace after '%s'" % char
         elif line[found - 1] != ',':
             code = ('E202' if char in '}])' else 'E203')  # if char in ',;:'
             yield found, f"{code} whitespace before '{char}'"
@@ -453,7 +495,7 @@ def whitespace_around_keywords(logical_line):
 
     Okay: True and False
     E271: True and  False
-    E272: True  and False
+    : True  and False
     E273: True and\tFalse
     E274: True\tand False
     """
@@ -461,14 +503,14 @@ def whitespace_around_keywords(logical_line):
         before, after = match.groups()
 
         if '\t' in before:
-            yield match.start(1), "E274 tab before keyword"
+            yield match.start(1), "tab before keyword"
         elif len(before) > 1:
-            yield match.start(1), "E272 multiple spaces before keyword"
+            yield match.start(1), "multiple spaces before keyword"
 
         if '\t' in after:
-            yield match.start(2), "E273 tab after keyword"
+            yield match.start(2), "tab after keyword"
         elif len(after) > 1:
-            yield match.start(2), "E271 multiple spaces after keyword"
+            yield match.start(2), "multiple spaces after keyword"
 
 @nedc_register_check
 def missing_whitespace_after_import_keyword(logical_line):
@@ -514,7 +556,7 @@ def missing_whitespace(logical_line):
                 continue  # Allow tuple with only one element: (3,)
             if char == ':' and next_char == '=' and sys.version_info >= (3, 8):
                 continue  # Allow assignment expression
-            yield index, "E231 missing whitespace after '%s'" % char
+            yield index, "missing whitespace after '%s'" % char
 
 @nedc_register_check
 def whitespace_before_parameters(logical_line, tokens):
@@ -550,7 +592,7 @@ def whitespace_before_parameters(logical_line, tokens):
                 not keyword.issoftkeyword(prev_text)
             )
         ):
-            yield prev_end, "E211 whitespace before '%s'" % text
+            yield prev_end, "whitespace before '%s'" % text
         prev_type = token_type
         prev_text = text
         prev_end = end
@@ -569,14 +611,14 @@ def whitespace_around_operator(logical_line):
         before, after = match.groups()
 
         if '\t' in before:
-            yield match.start(1), "E223 tab before operator"
+            yield match.start(1), "tab before operator"
         elif len(before) > 1:
-            yield match.start(1), "E221 multiple spaces before operator"
+            yield match.start(1), "multiple spaces before operator"
 
         if '\t' in after:
-            yield match.start(2), "E224 tab after operator"
+            yield match.start(2), "tab after operator"
         elif len(after) > 1:
-            yield match.start(2), "E222 multiple spaces after operator"
+            yield match.start(2), "multiple spaces after operator"
 
 @nedc_register_check
 def missing_whitespace_around_operator(logical_line, tokens):
@@ -625,7 +667,7 @@ def missing_whitespace_around_operator(logical_line, tokens):
                 # Found a (probably) needed space
                 if need_space is not True and not need_space[1]:
                     yield (need_space[0],
-                           "E225 missing whitespace around operator")
+                           "missing whitespace around operator")
                 need_space = False
             elif text == '>' and prev_text in ('<', '-'):
                 # Tolerate the "<>" operator, even if running Python 3
@@ -649,7 +691,7 @@ def missing_whitespace_around_operator(logical_line, tokens):
             else:
                 if need_space is True or need_space[1]:
                     # A needed trailing space was not found
-                    yield prev_end, "E225 missing whitespace around operator"
+                    yield prev_end, "missing whitespace around operator"
                 elif prev_text != '**':
                     code, optype = 'E226', 'arithmetic'
                     if prev_text == '%':
@@ -686,7 +728,7 @@ def missing_whitespace_around_operator(logical_line, tokens):
                 need_space = (prev_end, start != prev_end)
             elif need_space and start == prev_end:
                 # A needed opening space was not found
-                yield prev_end, "E225 missing whitespace around operator"
+                yield prev_end, "missing whitespace around operator"
                 need_space = False
         prev_type = token_type
         prev_text = text
@@ -706,9 +748,9 @@ def whitespace_around_comma(logical_line):
     for m in WHITESPACE_AFTER_COMMA_REGEX.finditer(line):
         found = m.start() + 1
         if '\t' in m.group():
-            yield found, "E242 tab after '%s'" % m.group()[0]
+            yield found, "tab after '%s'" % m.group()[0]
         else:
-            yield found, "E241 multiple spaces after '%s'" % m.group()[0]
+            yield found, "multiple spaces after '%s'" % m.group()[0]
 
 @nedc_register_check
 def whitespace_before_comment(logical_line, tokens):
@@ -740,17 +782,17 @@ def whitespace_before_comment(logical_line, tokens):
             if inline_comment:
                 if prev_end[0] == start[0] and start[1] < prev_end[1] + 2:
                     yield (prev_end,
-                           "E261 at least two spaces before inline comment")
+                           "at least two spaces before inline comment")
             symbol, sp, comment = text.partition(' ')
             bad_prefix = symbol not in '#:' and (symbol.lstrip('#')[:1] or '#')
             if inline_comment:
                 if bad_prefix or comment[:1] in WHITESPACE:
-                    yield start, "E262 inline comment should start with '#'"
+                    yield start, "inline comment should start with '#'"
             elif bad_prefix and (bad_prefix != '!' or start[0] > 1):
                 if bad_prefix != '-':
-                    yield start, "E265 block comment should start with '-'"
+                    yield start, "block comment should start with '-'"
                 elif comment:
-                    yield start, "E266 too many leading '#' for block comment"
+                    yield start, "too many leading '#' for block comment"
         elif token_type != tokenize.NL:
             prev_end = end
 
@@ -771,7 +813,7 @@ def imports_on_separate_lines(logical_line):
     if line.startswith('import '):
         found = line.find(',')
         if -1 < found and ';' not in line[:found]:
-            yield found, "E401 multiple imports on one line"
+            yield found, "multiple imports on one line"
 
 @nedc_register_check
 def module_imports_on_top_of_file(logical_line, indent_level, checker_state):
@@ -811,7 +853,7 @@ def module_imports_on_top_of_file(logical_line, indent_level, checker_state):
     line = logical_line
     if line.startswith('import ') or line.startswith('from '):
         if checker_state.get('seen_non_imports', False):
-            yield 0, "E402 module level import not at top of file"
+            yield 0, "module level import not at top of file"
     elif re.match(DUNDER_REGEX, line):
         return
     elif any(line.startswith(kw) for kw in allowed_keywords):
@@ -840,7 +882,7 @@ def bare_except(logical_line):
 
     match = BLANK_EXCEPT_REGEX.match(logical_line)
     if match:
-        yield match.start(), "E722 do not use bare 'except'"
+        yield match.start(), "do not use bare 'except'"
 
 @nedc_register_check
 def maximum_doc_length(logical_line, max_doc_length, tokens):
@@ -934,8 +976,8 @@ class Checker():
 
     def __init__(self, filename=None, lines=None,
                  options=None, report=None, **kwargs):
-        self._physical_line_checks = FinalReport.nedc_checks(self,'physical_line')
-        self._logical_line_checks = FinalReport.nedc_checks(self,'logical_line')
+        self._physical_line_checks = FinalReport.get_checks(self,'physical_line')
+        self._logical_line_checks = FinalReport.get_checks(self,'logical_line')
         self.max_line_length = MAX_LINE_LENGTH
         self.max_doc_length = MAX_DOC_LENGTH
         self.indent_size = INDENT_SIZE
@@ -1152,6 +1194,8 @@ class Checker():
             self.check_physical(self.lines[-1])
             self.check_logical()
         return self.report.get_file_results()
+# 
+# end of class
 
 class BaseReport:
     """Collect the results of the checks."""
@@ -1188,6 +1232,8 @@ class BaseReport:
         self.file_errors += 1
         self.total_errors += 1
         return code
+#
+# end of class
 
 class StandardReport(BaseReport):
     """Collect and print the results of the checks."""
@@ -1209,7 +1255,7 @@ class StandardReport(BaseReport):
         code = super().error(line_number, offset, text, check)
         if code and (self.counters[code] == 1 or self._repeat):
             self._deferred_print.append(
-                (line_number, offset, code, text[5:]))
+                (line_number, offset, code, text[:]))
         return code
 
     def get_file_results(self):
@@ -1222,7 +1268,6 @@ class StandardReport(BaseReport):
                     'row': self.line_offset + line_number, 'col': offset + 1,
                     'code': code, 'text': text,
                 })
-
                 # stdout is block buffered when not stdout.isatty().
                 # line can be broken where buffer boundary since other
                 # processes write to same file.
@@ -1231,9 +1276,11 @@ class StandardReport(BaseReport):
                 # len(line) < 8192.
                 sys.stdout.flush()
         else:
-            print("Check Completed. Congratulations,  your script has been Isipify!")
+            print("Check Completed. Congratulations, your script has been Isipify!")
 
         return self.file_errors
+#
+# end of class
 
 class FinalReport():
 
@@ -1243,9 +1290,9 @@ class FinalReport():
         options = StandardReport
         self.runner = self.input_file
         self.options = options
-        self.physical_line_checks = self.nedc_checks('physical_line')
-        self.logical_line_checks = self.nedc_checks('logical_line')
-        self.astnedc_checks = self.nedc_checks('tree')
+        self.physical_line_checks = self.get_checks('physical_line')
+        self.logical_line_checks = self.get_checks('logical_line')
+        self.astnedc_checks = self.get_checks('tree')
         self.init_report()
 
     def init_report(self):
@@ -1253,23 +1300,22 @@ class FinalReport():
         self.options.report = (StandardReport)(self.options)
         return self.options.report
 
-    def check_files(self, paths):
+    def check_files(self, path):
         """Run all checks on the paths."""
         report = StandardReport
         runner = self.runner
         try:
-            for path in paths:
-                with open(path) as f:
-                    file = list(f)
-                    header = ''.join(file[:])
-                    nedc_header_check(header)
-                    nedc_gen_import_check(header)
-                    nedc_nedc_import_check(header)
-                    nedc_global_var_header(header)
-                    nedc_function_header(header)
-                    nedc_function_define_header(header)
-                    nedc_main_function_header(header)
-                runner(path)
+            with open(path) as f:
+                file = list(f)
+                header = ''.join(file[:])
+                nedc_header_check(header)
+                nedc_gen_import_check(header)
+                nedc_nedc_import_check(header)
+                nedc_global_var_header(header)
+                nedc_function_header(header)
+                nedc_function_define_header(header)
+                nedc_main_function_header(header)
+            runner(path)
         except KeyboardInterrupt:
             print('... stopped')
         return report
@@ -1280,7 +1326,7 @@ class FinalReport():
             filename, lines=lines, options= self.options)
         return fchecker.check_all(expected=expected, line_offset=line_offset)
 
-    def nedc_checks(self, argument_name):
+    def get_checks(self, argument_name):
         """Get all the checks for this category.
 
         Find all globally visible functions where the first argument
@@ -1292,11 +1338,74 @@ class FinalReport():
             if any(code for code in codes):
                 checks.append((check.__name__, check, args))
         return sorted(checks)
+#
+# end of class
 
 # function: main
 #
 def main(argv):
-    FinalReport().check_files(['nedc_pyprint_header.py'])
+
+    # create a command line parser
+    #
+    cmdl = ncp.Cmdl(USAGE_FILE, HELP_FILE)
+    cmdl.add_argument("files", type = str, nargs = '*')
+
+    # parse the command line
+    #
+    args = cmdl.parse_args()
+
+    for fname in args.files:
+
+        # expand the file filename (checking for environment variables)
+        #
+        ffile = nft.get_fullpath(fname)
+
+        # check if the file exists
+        #
+        if os.path.exists(ffile) is False:
+            print("Error: %s (line: %s) %s: file does not exist (%s)" %
+                  (__FILE__, ndt.__LINE__, ndt.__NAME__, fname))
+            sys.exit(os.EX_SOFTWARE)
+
+        # case (1): a python script
+        #
+        if (is_python(fname)):
+
+            # run the checker on the file
+            #
+            FinalReport().check_files(fname)
+
+        # case (2): a list
+        #
+        else:
+
+            # fetch the list
+            #
+            files = nft.get_flist(ffile)
+            if files is None:
+                print("Error: %s (line: %s) %s: error opening (%s)" %
+                      (__FILE__, ndt.__LINE__, ndt.__NAME__, fname))
+                sys.exit(os.EX_SOFTWARE)
+
+            else:
+
+                for file in files:
+
+                    # expand the filename (checking for environment variables)
+                    #
+                    ffile = nft.get_fullpath(file)
+
+                    # check if the file exists
+                    #
+                    if os.path.exists(ffile) is False:
+                        print("Error: %s (line: %s) %s: %s (%s)" %
+                              (__FILE__, ndt.__LINE__, ndt.__NAME__,
+                               "file does not exist", fname))
+                        sys.exit(os.EX_SOFTWARE)
+                    
+                    # run the checker on the file
+                    #
+                    FinalReport().check_files(file)
 #
 # end of main
 
@@ -1305,3 +1414,5 @@ def main(argv):
 if __name__ == '__main__':
     main(sys.argv[0:])
 
+#
+# end of file
